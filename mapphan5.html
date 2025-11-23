@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Mini Demo: Leaflet & Geolocation</title>
+
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+<style>
+  body {
+    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    margin: 20px;
+    background: #fff;
+    color: #111;
+  }
+
+  h1 {
+    text-align: center;
+    margin-bottom: 18px;
+  }
+
+  #map {
+    width: 100%;
+    max-width: 900px;
+    height: 420px;
+    margin: 0 auto 16px;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+  }
+
+  .controls {
+    max-width: 900px;
+    margin: 10px auto;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  button {
+    padding: 12px 18px;
+    border-radius: 8px;
+    border: 2px solid #333;
+    background: #fff;
+    cursor: pointer;
+    font-size: 16px;
+  }
+
+  #info {
+    max-width: 900px;
+    margin: 14px auto;
+    padding: 14px;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    background: #fafafa;
+    line-height: 1.6;
+    min-height: 56px;
+  }
+
+  .small { font-size: 13px; color: #555; }
+</style>
+</head>
+<body>
+
+<h1>Mini Demo: Leaflet & Geolocation</h1>
+
+<!-- map -->
+<div id="map"></div>
+
+<!-- controls -->
+<div class="controls">
+  <button id="btnLocate">Lấy vị trí</button>
+  <button id="btnTrack">Bắt đầu theo dõi</button>
+  <button id="btnStop">Dừng theo dõi</button>
+  <div class="small" id="status">Trạng thái: chờ thao tác</div>
+</div>
+
+<!-- info: hiển thị tọa độ -->
+<div id="info">Đang chờ xác định vị trí…</div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+/*
+  Mini demo:
+  - map (Leaflet)
+  - marker
+  - nút "Lấy vị trí"
+  - hiển thị tọa độ
+  - watchPosition tracking, cập nhật marker, hiện "Đang di chuyển…"
+*/
+
+// 1) Khởi tạo map (view tạm)
+const map = L.map('map').setView([20, 0], 2);
+
+// 2) Tile layer (OpenStreetMap)
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '© OpenStreetMap'
+}).addTo(map);
+
+// 3) Biến dùng chung
+let marker = null;
+let watchId = null;
+const info = document.getElementById('info');
+const status = document.getElementById('status');
+const btnLocate = document.getElementById('btnLocate');
+const btnTrack = document.getElementById('btnTrack');
+const btnStop = document.getElementById('btnStop');
+
+// helper: hiển thị position data
+function showPositionData(pos, prefix = '') {
+  const c = pos.coords;
+  const lat = c.latitude.toFixed(6);
+  const lng = c.longitude.toFixed(6);
+  const acc = (c.accuracy ?? '—');
+  const alt = (c.altitude ?? '—');
+  const altAcc = (c.altitudeAccuracy ?? '—');
+  const heading = (c.heading ?? '—');
+  const speed = (c.speed ?? '—');
+
+  info.innerHTML = `
+    <b>${prefix}Tọa độ:</b><br>
+    Latitude: ${lat} &nbsp; Longitude: ${lng} <br>
+    <b>Thông số khác:</b> accuracy: ${acc} m, altitude: ${alt}, altitudeAcc: ${altAcc}, heading: ${heading}, speed: ${speed} <br>
+    <span class="small">Timestamp: ${new Date(pos.timestamp).toLocaleString()}</span>
+  `;
+}
+
+// helper: xử lý lỗi
+function handleError(err) {
+  let msg = '';
+  switch (err.code) {
+    case err.PERMISSION_DENIED:
+      msg = '❌ Bạn đã từ chối quyền vị trí (PERMISSION_DENIED).';
+      break;
+    case err.POSITION_UNAVAILABLE:
+      msg = '⚠️ Không thể xác định vị trí (POSITION_UNAVAILABLE).';
+      break;
+    case err.TIMEOUT:
+      msg = '⏳ Lấy vị trí quá thời gian (TIMEOUT).';
+      break;
+    default:
+      msg = '⚠️ Lỗi vị trí: ' + (err.message || 'Không xác định');
+  }
+  info.innerHTML = `<b>Lỗi:</b> ${msg}`;
+  status.innerText = 'Trạng thái: lỗi';
+}
+
+// đặt/di chuyển marker
+function setOrUpdateMarker(lat, lng, autoPan = true) {
+  if (!marker) {
+    marker = L.marker([lat, lng]).addTo(map);
+  } else {
+    marker.setLatLng([lat, lng]);
+  }
+  if (autoPan) {
+    map.setView([lat, lng], 16); // zoom tới vị trí
+  }
+}
+
+// Option dùng chung
+const geoOptions = {
+  enableHighAccuracy: true,
+  timeout: 8000,
+  maximumAge: 2000
+};
+
+// Nút: lấy vị trí 1 lần
+btnLocate.addEventListener('click', () => {
+  if (!navigator.geolocation) {
+    info.innerText = 'Trình duyệt không hỗ trợ Geolocation.';
+    return;
+  }
+  status.innerText = 'Trạng thái: lấy vị trí 1 lần…';
+  navigator.geolocation.getCurrentPosition((pos) => {
+    const lat = pos.coords.latitude;
+    const lng = pos.coords.longitude;
+    setOrUpdateMarker(lat, lng, true);
+    showPositionData(pos, '');
+    status.innerText = 'Trạng thái: lấy vị trí thành công';
+  }, handleError, geoOptions);
+});
+
+// Nút: bắt đầu theo dõi (watchPosition)
+btnTrack.addEventListener('click', () => {
+  if (!navigator.geolocation) {
+    info.innerText = 'Trình duyệt không hỗ trợ Geolocation.';
+    return;
+  }
+  if (watchId !== null) {
+    status.innerText = 'Trạng thái: Đang theo dõi sẵn (đã có watch).';
+    return;
+  }
+  status.innerText = 'Trạng thái: Đang theo dõi (Đang di chuyển…)';
+  info.innerText = 'Đang di chuyển…';
+
+  watchId = navigator.geolocation.watchPosition((pos) => {
+    const lat = pos.coords.latitude;
+    const lng = pos.coords.longitude;
+    setOrUpdateMarker(lat, lng, false); // không auto-pan quá mạnh
+    showPositionData(pos, 'Đang di chuyển — ');
+    status.innerText = 'Trạng thái: Đang theo dõi (Đang di chuyển…)';
+  }, (err) => {
+    handleError(err);
+    // nếu lỗi nặng (ví dụ TIMEOUT liên tục), bạn có thể clearWatch ở đây nếu cần
+  }, geoOptions);
+});
+
+// Nút: dừng theo dõi
+btnStop.addEventListener('click', () => {
+  if (watchId !== null) {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    status.innerText = 'Trạng thái: Đã dừng theo dõi';
+    info.innerText = 'Đã dừng theo dõi vị trí.';
+  } else {
+    status.innerText = 'Trạng thái: Không có phiên theo dõi đang chạy';
+  }
+});
+</script>
+
+</body>
+</html>
